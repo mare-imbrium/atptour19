@@ -4,7 +4,7 @@
 #  Description: Parse the scores downloaded from atptour.com
 #       Author:  r kumar
 #         Date: 2019-02-01 - 10:07
-#  Last update: 2019-02-02 14:54
+#  Last update: 2019-02-03 00:14
 #      License: MIT License
 # ----------------------------------------------------------------------------- #
 #
@@ -20,8 +20,8 @@ require 'color' # see ~/work/projects/common/color.rb
   # print color("Hello there black reverse on yellow\n", "black", "on_yellow", "reverse")
 
 # --- some common stuff ---
-today = Date.today.to_s
-now = Time.now.to_s
+#today = Date.today.to_s
+#now = Time.now.to_s
 # include? exist? each_pair split gsub
 
 def loadYML( filename)
@@ -61,33 +61,40 @@ def _abbreviate lev
 end
 
 
-def _process year
-  File.open(filename).each { |line|
-    line = line.chomp
-  }
-end
+#---  FUNCTION  ----------------------------------------------------------------
+#          NAME:  process_year
+#   DESCRIPTION:  parse downloaded files for the given year
+#    PARAMETERS:  Integer year
+#       RETURNS:  nil
+#-------------------------------------------------------------------------------
 def process_year year
   #
   # Convert incoming html files to csv or json files
   path  = "in/#{year}/results"
   files =  Dir.glob("#{path}/*")
-  puts "infiles: #{files.size}"
+  $stderr.puts "infiles: #{files.size}"
   exit if files.size < 1
   outpath = path.sub("in", "out")
 
-  # select files that do not have csv counterpart
+  # select files that do not have tsv counterpart
+  outnames = Hash.new
   todolist = files.select {|v| 
     name = File.basename(v, ".html")
-    oname = "#{outpath}/#{name}.yml"
-    #puts oname
+    oname = "#{outpath}/#{name}.tsv"
+    outnames[v] = oname
+    #$stderr.puts oname
     !File.exist? oname
   }
-  puts "todo list"
-  puts todolist.size
+  $stderr.puts "todo list"
+  $stderr.puts todolist.size
   exit(1) if todolist.size == 0
   #pp todolist
   todolist.each_with_index do |e, ix|
-    _parse_html e
+    main, fullarray = _parse_html e
+    puts "Calling print_match with #{outnames[e]}"
+    print_match outnames[e], fullarray
+    append_event main
+    #print_match "tmp.#{ix}", fullarray
   end
 end
 def _parse_html filename
@@ -100,6 +107,10 @@ def _parse_html filename
   # First the event level data such as dates, name, prize money, court, surface, commitment
   # second the result of each match as a line-item
   main = Hash.new
+  year = filename.split(sep)[1] 
+  code = filename.split(sep).last.sub(".html","").split('-').last
+  event_code = "#{year}-#{code}"
+  main[:event_code] = event_code
   daterange = doc.css("td.title-content span.tourney-dates").text.strip
   dates = daterange.split("-")
   main[:start_date] = dates.first.strip
@@ -112,34 +123,32 @@ def _parse_html filename
   main[:location] = location
   main[:title] = doc.css("title").text.strip.split("|").first.strip
   #puts filename
-  year = filename.split(sep)[1] 
-  code = filename.split(sep).last.sub(".html","").split('-').last
-  event_code = "#{year}-#{code}"
-  pp main
-  puts ">>> #{event_code}"
+  #pp main
+  $stderr.puts ">>> #{event_code}"
   #trs = doc.css("div.day-table-wrapper table.day-table tbody tr")
   s = doc.css("div#scoresResultsContent")
   theads=s.css("thead")
   tbodys=s.css("tbody")
 
   counter = 0
+  fullarray = Array.new
   tbodys.each_with_index do |tbody, iix|
-    puts theads[iix].css("th").text
+    #$stderr.puts theads[iix].css("th").text
     levelstr = _abbreviate(theads[iix].css("th").text)
     # TODO to get the round we need to check tbody and the th
     tbody.css("tr").each_with_index do |tr, trix|
       w = Hash.new
       w[:seed] = tr.css("td.day-table-seed")[0].text.strip
-      w[:link] =  tr.css("td.day-table-name a").attribute("href").text
-      w[:code] = w[:link].split(sep)[-2]
+      link =  tr.css("td.day-table-name a").attribute("href").text
+      w[:code] = link.split(sep)[-2]
       w[:name] =  tr.css("td.day-table-name a").first.text
       #puts tr.css("td.day-table-flag img").attribute("src").text
       flag =  tr.css("td.day-table-flag img")[0].attribute("src").text
       w[:country] =  flag.split(sep).last[0..2].upcase
       l = Hash.new
       l[:seed] =  tr.css("td.day-table-seed")[1].text.strip
-      l[:link] =  tr.css("td.day-table-name a")[1].attribute("href").text
-      l[:code] =  l[:link].split(sep)[-2]
+      link =  tr.css("td.day-table-name a")[1].attribute("href").text
+      l[:code] =  link.split(sep)[-2]
       l[:name] =  tr.css("td.day-table-name a")[1].text
       flag =  tr.css("td.day-table-flag img")[1].attribute("src").text
       l[:country] =  flag.split(sep).last[0..2].upcase
@@ -152,18 +161,46 @@ def _parse_html filename
       else
         match_code = "NOSTATS"
       end
+      w[:seed] = "-" if w[:seed] == ""
+      l[:seed] = "-" if l[:seed] == ""
+      w[:code] = "-" if w[:code] == ""
+      l[:code] = "-" if l[:code] == ""
       num = counter + 1
       counter += 1
       #puts stats
-      print "#{event_code}#{osep}#{num}#{osep}"
-      print w.values.join(osep)
-      print osep
-      print l.values.join(osep)
-      print osep
-      puts [score, level, match_code].join(osep)
+      arr = Array.new
+      arr << [ event_code, num, w.values, l.values, score, level, match_code ].flatten
+      fullarray << arr
+      #print "#{event_code}#{osep}#{num}#{osep}"
+      #print w.values.join(osep)
+      #print osep
+      #print l.values.join(osep)
+      #print osep
+      #puts [score, level, match_code].join(osep)
 
     end # rows
   end
+  return main, fullarray
+end
+def print_match outname, fullarray
+  osep = "\t"
+  puts "Writing to #{outname}"
+  File.open(outname, 'w') {|f| 
+    fullarray.each do |row|
+      f.puts row.join(osep)
+    end
+  }
+end
+def append_event main
+  # ::TRICKY:: 2019-02-03 - 00:08 - I am appending to a file, what if already a row for that event ?
+  ##  maybe i should read into array, and then insert only if not present and then write array back
+  osep = "\t"
+  outname = "events.tsv"
+  $stderr.puts "Writing to #{outname}"
+  File.open(outname, 'a') {|f| 
+    f.puts main.values.join(osep)
+  }
+  $stderr.puts "Written to #{outname}"
 end
 
 
